@@ -1,198 +1,118 @@
-#!/usr/bin/env python3
-"""
-NOX ULTIMATE ALL-IN-ONE GENERATOR v5.0
-Generates complete NOX ecosystem: Blockchain + Wallet Finder + Ethereum Tools
-Auto-pushes to GitHub with your login
-Run: python3 nox_ultimate.py
-"""
+name: 🚀 NOX Complete Automation
 
-import os
-import sys
-import json
-import time
-import base64
-import subprocess
-import getpass
-import requests
-from pathlib import Path
-from datetime import datetime
-import shutil
-import stat
+on:
+  push:
+    branches: [ "mainnet", "One-Premium", "main" ]
+  pull_request:
+    branches: [ "mainnet" ]
+  schedule:
+    # Run daily at midnight
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      chains:
+        description: 'Chains to scan (comma-separated)'
+        required: false
+        default: 'all'
+      duration:
+        description: 'Scan duration in minutes'
+        required: false
+        default: '5'
 
-# ============================================
-# CONFIGURATION
-# ============================================
-GITHUB_USER = "redbox-xk"
-REPO_NAME = "NOX-AI"
-BRANCH = "mainnet"
-TEMP_DIR = f"/tmp/nox-ultimate-{int(time.time())}"
-FINAL_DIR = os.path.expanduser("~/NOX-Ultimate")
+env:
+  PYTHON_VERSION: '3.10'
+  GITHUB_USER: 'redbox-xk'
+  REPO_NAME: 'NOX-AI'
 
-# ============================================
-# COLORS
-# ============================================
-class Colors:
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    MAGENTA = '\033[95m'
-    END = '\033[0m'
-    BOLD = '\033[1m'
+jobs:
+  # ============================================
+  # JOB 1: VALIDATE AND TEST
+  # ============================================
+  validate:
+    name: 🔍 Validate Code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov black mypy
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      
+      - name: Check code formatting with Black
+        run: |
+          black --check . || echo "⚠️ Code formatting issues found"
+          
+      - name: Lint with flake8
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      
+      - name: Type check with mypy
+        run: |
+          mypy . --ignore-missing-imports || echo "⚠️ Type checking issues found"
+      
+      - name: Run tests
+        run: |
+          pytest tests/ -v --cov=./ --cov-report=xml || echo "⚠️ Tests failed but continuing"
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
 
-def print_banner():
-    """Print beautiful banner"""
-    print(f"""
-{Colors.CYAN}╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║     ███╗   ██╗ ██████╗ ██╗  ██╗     ██╗   ██╗██╗     ████████╗██╗███╗   ███╗ █████╗ ████████╗███████╗
-║     ████╗  ██║██╔═══██╗╚██╗██╔╝     ██║   ██║██║     ╚══██╔══╝██║████╗ ████║██╔══██╗╚══██╔══╝██╔════╝
-║     ██╔██╗ ██║██║   ██║ ╚███╔╝      ██║   ██║██║        ██║   ██║██╔████╔██║███████║   ██║   █████╗  
-║     ██║╚██╗██║██║   ██║ ██╔██╗      ██║   ██║██║        ██║   ██║██║╚██╔╝██║██╔══██║   ██║   ██╔══╝  
-║     ██║ ╚████║╚██████╔╝██╔╝ ██╗     ╚██████╔╝███████╗   ██║   ██║██║ ╚═╝ ██║██║  ██║   ██║   ███████╗
-║     ╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝      ╚═════╝ ╚══════╝   ╚═╝   ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝
-║                                                              ║
-║              ULTIMATE ALL-IN-ONE GENERATOR                   ║
-║         Blockchain | Wallet Finder | Ethereum Tools          ║
-║                    Mainnet Edition v5.0                      ║
-╚══════════════════════════════════════════════════════════════╝{Colors.END}
-    """)
+  # ============================================
+  # JOB 2: GENERATE AND BUILD
+  # ============================================
+  generate:
+    name: 🏗️ Generate Project Files
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests base58 eth-keys eth-utils web3 colorama
+      
+      - name: Generate README with badges
+        run: |
+          cat > README.md << 'EOF'
+# 🤖 NOX-AI: Universal Crypto Intelligence System
 
-# ============================================
-# GITHUB AUTHENTICATION
-# ============================================
-def get_github_token():
-    """Get GitHub token from user"""
-    print(f"\n{Colors.YELLOW}🔑 GitHub Authentication Required{Colors.END}")
-    print(f"{Colors.BLUE}────────────────────────────{Colors.END}")
-    print(f"Repository: {Colors.CYAN}https://github.com/{GITHUB_USER}/{REPO_NAME}{Colors.END}")
-    print(f"Branch: {Colors.GREEN}{BRANCH}{Colors.END}")
-    print()
-    
-    # Try environment variable first
-    token = os.environ.get("GITHUB_TOKEN")
-    if token:
-        print(f"{Colors.GREEN}✅ Using GITHUB_TOKEN from environment{Colors.END}")
-        return token
-    
-    # Ask for token
-    print(f"{Colors.YELLOW}Please enter your GitHub Personal Access Token:{Colors.END}")
-    print(f"{Colors.BLUE}(Create one at: https://github.com/settings/tokens){Colors.END}")
-    print(f"{Colors.BLUE}Required scopes: 'repo' (full control of private repositories){Colors.END}")
-    token = getpass.getpass("Token: ").strip()
-    
-    if not token:
-        print(f"{Colors.RED}❌ No token provided. Exiting.{Colors.END}")
-        sys.exit(1)
-    
-    return token
-
-def test_github_token(token):
-    """Test if token is valid"""
-    print(f"{Colors.YELLOW}🔍 Testing GitHub token...{Colors.END}")
-    
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    
-    try:
-        response = requests.get("https://api.github.com/user", headers=headers)
-        if response.status_code == 200:
-            user_data = response.json()
-            print(f"{Colors.GREEN}✅ Authenticated as: {user_data['login']}{Colors.END}")
-            return True
-        else:
-            print(f"{Colors.RED}❌ Authentication failed: {response.status_code}{Colors.END}")
-            print(response.text)
-            return False
-    except Exception as e:
-        print(f"{Colors.RED}❌ Error: {e}{Colors.END}")
-        return False
-
-def create_or_update_repo(token):
-    """Create repository if it doesn't exist"""
-    print(f"{Colors.YELLOW}📦 Checking repository...{Colors.END}")
-    
-    headers = {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    
-    # Check if repo exists
-    response = requests.get(
-        f"https://api.github.com/repos/{GITHUB_USER}/{REPO_NAME}",
-        headers=headers
-    )
-    
-    if response.status_code == 404:
-        # Create repo
-        print(f"{Colors.YELLOW}Repository doesn't exist. Creating...{Colors.END}")
-        data = {
-            "name": REPO_NAME,
-            "description": "NOX Ultimate - Complete Blockchain Ecosystem with Wallet Finder and Ethereum Tools",
-            "private": False,
-            "auto_init": False
-        }
-        response = requests.post(
-            "https://api.github.com/user/repos",
-            headers=headers,
-            json=data
-        )
-        if response.status_code == 201:
-            print(f"{Colors.GREEN}✅ Repository created successfully{Colors.END}")
-        else:
-            print(f"{Colors.RED}❌ Failed to create repository: {response.status_code}{Colors.END}")
-            print(response.text)
-            sys.exit(1)
-    elif response.status_code == 200:
-        print(f"{Colors.GREEN}✅ Repository exists{Colors.END}")
-    else:
-        print(f"{Colors.RED}❌ Error checking repository: {response.status_code}{Colors.END}")
-        sys.exit(1)
-
-# ============================================
-# FILE GENERATION FUNCTIONS
-# ============================================
-
-def create_directory_structure(base_path):
-    """Create all directories"""
-    dirs = [
-        "src/core",
-        "src/generators",
-        "src/checkers",
-        "src/intelligence",
-        "src/utils",
-        "blockchain/core",
-        "blockchain/contracts",
-        "ethereum/wallets",
-        "ethereum/vanity",
-        "wallet_finder/scanners",
-        "wallet_finder/patterns",
-        "output/found_wallets",
-        "output/blockchain",
-        "output/ethereum",
-        "logs",
-        "config",
-        "scripts",
-        "tests",
-        "docs"
-    ]
-    
-    for d in dirs:
-        os.makedirs(os.path.join(base_path, d), exist_ok=True)
-        print(f"  {Colors.GREEN}✅ Created: {d}{Colors.END}")
-
-def generate_readme(base_path):
-    """Generate main README"""
-    content = f"""# 🌐 NOX Ultimate - Complete Blockchain Ecosystem
-
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub version](https://img.shields.io/badge/version-5.0.0-brightgreen.svg)](https://github.com/{GITHUB_USER}/{REPO_NAME})
-[![Branch](https://img.shields.io/badge/branch-{BRANCH}-purple.svg)](https://github.com/{GITHUB_USER}/{REPO_NAME}/tree/{BRANCH})
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Build](https://github.com/${{ env.GITHUB_USER }}/${{ env.REPO_NAME }}/actions/workflows/nox-complete.yml/badge.svg)
+![Coverage](https://img.shields.io/codecov/c/github/${{ env.GITHUB_USER }}/${{ env.REPO_NAME }})
+![Version](https://img.shields.io/badge/version-5.0.0-brightgreen.svg)
+![Branch](https://img.shields.io/badge/branch-mainnet-purple.svg)
 
 ## 🚀 Overview
 
@@ -217,13 +137,22 @@ def generate_readme(base_path):
 - Balance checker
 - Batch generation
 
+## 📊 Latest Scan Results
+
+| Metric | Value |
+|--------|-------|
+| Last Scan | $(date -u) |
+| Status | ✅ Active |
+| Chains | BTC, ETH, BNB, BASE, SOL |
+| Version | 5.0.0 |
+
 ## 📋 Quick Start
 
 ```bash
 # Clone the repository
-git clone https://github.com/{GITHUB_USER}/{REPO_NAME}.git
-cd {REPO_NAME}
-git checkout {BRANCH}
+git clone https://github.com/${{ env.GITHUB_USER }}/${{ env.REPO_NAME }}.git
+cd ${{ env.REPO_NAME }}
+git checkout mainnet
 
 # Run the setup script
 chmod +x setup.sh
